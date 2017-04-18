@@ -8,7 +8,7 @@
  * File:   Server.cpp
  * Author: root
  *
- * Created on February 22, 2017, 4:31 PM
+ * Created on February 24, 2017, 4:31 PM
  */
 
 #include <cstdlib>
@@ -23,79 +23,71 @@
 
 using namespace std;
 
-#define SIZE_HEADER sizeof(uint32_t)
-
+#define SIZE_HEADER_FILE_NAME sizeof(uint32_t)
 int nSocketClient; //thread create n socket client
 
-bool setTimeout(int nSocketClient)
-{
-    struct timeval tvTimeout;
-    tvTimeout.tv_sec = 60;
-    tvTimeout.tv_usec = 0;
-    
-    int8_t uTimeout = setsockopt(nSocketClient, SOL_SOCKET, SO_RCVTIMEO, (char *)&tvTimeout,sizeof(struct timeval));
-    if(uTimeout == -1)
-        return false;
-    return true;
-}
-
-bool recvFileInfor(int nSocketClient, string& strMessageFromClient, int32_t& uLenData)
+bool recvFileInfor(int nSocketClient, string& strMessageFromClient, int32_t& uLenData) 
 {
     strMessageFromClient.clear();
     uLenData = 0;
     int32_t uBytes = 0, uLenFileName = 0;
     int32_t uRecvMessage[6] = {0};
-    
-    //Recv size file name
-    if(recv(nSocketClient, &uLenFileName, SIZE_HEADER, 0) != SIZE_HEADER)
+
+    //Recv length file name
+    if (recv(nSocketClient, &uLenFileName, SIZE_HEADER_FILE_NAME, 0) != SIZE_HEADER_FILE_NAME) 
     {
         cout << "Receive header failed" << endl;
         return false;
     }
     uLenFileName = ntohl(uLenFileName);
-    if(!uLenFileName)
+    if (!uLenFileName) 
     {
         std::cout << "Header failed" << endl;
         return false;
     }
 
-    while (uLenFileName > 0)
+    //Recv  length data file
+    if (recv(nSocketClient, &uLenData, sizeof (uint32_t), 0) != sizeof (uint32_t)) 
     {
-        uBytes = sizeof(uRecvMessage) - 1;
-        if(uLenFileName < uBytes)
-            uBytes = uLenFileName;
-
-        memset(uRecvMessage, 0, sizeof(uRecvMessage));
-        if(recv(nSocketClient , (char*)uRecvMessage , uBytes, 0) != uBytes)
-        {
-            cout << "Receive data failed" << endl;
-            break;
-        }
-        strMessageFromClient = strMessageFromClient + (char*)uRecvMessage;
-        uLenFileName = uLenFileName - uBytes;
+        return false;
     }
-    //get data length
-    if(recv(nSocketClient , &uLenData , sizeof(uint32_t), 0) != sizeof(uint32_t));
-    uLenData = ntohl(uLenData);
-    if(!uLenData)
+    if (!uLenData) 
     {
         std::cout << "Recv Data length fail" << endl;
         return false;
     }
+    uLenData = ntohl(uLenData);
+
+    //Recv file name
+    while (uLenFileName > 0) 
+    {
+        uBytes = sizeof (uRecvMessage) - 1;
+        if (uLenFileName < uBytes)
+            uBytes = uLenFileName;
+
+        memset(uRecvMessage, 0, sizeof (uRecvMessage));
+        if (recv(nSocketClient, (char*) uRecvMessage, uBytes, 0) != uBytes) 
+        {
+            cout << "Receive data failed" << endl;
+            break;
+        }
+        strMessageFromClient = strMessageFromClient + (char*) uRecvMessage;
+        uLenFileName = uLenFileName - uBytes;
+    }
     return true;
 }
 
-bool sendMessage(string const& strMessageToClient)
+bool sendMessage(string const& strMessageToClient) 
 {
     uint8_t szBuffer[100] = {0};
     uint32_t uLenData = 0, uLenSend = 0;
     uLenData = strMessageToClient.length();
     uLenData = htonl(uLenData);
-    memcpy(szBuffer, &uLenData, SIZE_HEADER);
-    memcpy(szBuffer + SIZE_HEADER, strMessageToClient.c_str(), strMessageToClient.length());
-    uLenSend = SIZE_HEADER + strMessageToClient.length();
+    memcpy(szBuffer, &uLenData, SIZE_HEADER_FILE_NAME);
+    memcpy(szBuffer + SIZE_HEADER_FILE_NAME, strMessageToClient.c_str(), strMessageToClient.length());
+    uLenSend = SIZE_HEADER_FILE_NAME + strMessageToClient.length();
     //Send some data
-    if (send(nSocketClient, szBuffer, uLenSend, 0) !=  uLenSend) 
+    if (send(nSocketClient, szBuffer, uLenSend, 0) != uLenSend) 
     {
         std::cout << "Send failed" << endl;
         return false;
@@ -103,120 +95,132 @@ bool sendMessage(string const& strMessageToClient)
     return true;
 }
 
-void *ConnectionHandler(void *socketListen)
+void *ConnectionHandler(void *socketListen) 
 {
     string strMessageFromClient = "";
     int32_t uLenData = 0;
-    if(!socketListen)
+    if (!socketListen)
         return NULL;
     //Get the socket descriptor
-    nSocketClient = reinterpret_cast<std::uintptr_t>(socketListen);
-    if(setTimeout(nSocketClient) == false)
-        return NULL;
-    while( true )
-    {   //Recv file info
-        if(recvFileInfor(nSocketClient, strMessageFromClient, uLenData) == false)
-            break;
+    nSocketClient = reinterpret_cast<std::uintptr_t> (socketListen);
 
-        string strMessageToClient = "Accepted file Infor.";
-        if(sendMessage(strMessageToClient) == false)
+    //set timeout
+    struct timeval tvTimeout;
+    tvTimeout.tv_sec = 60;
+    tvTimeout.tv_usec = 0;
+
+    int8_t uTimeout = setsockopt(nSocketClient, SOL_SOCKET, SO_RCVTIMEO, (char *) &tvTimeout, sizeof (struct timeval));
+    if (uTimeout == -1)
+    {
+        close(nSocketClient);
+        return NULL;
+    }
+    
+    //Recv file info
+    while (true) 
+    { 
+        if (recvFileInfor(nSocketClient, strMessageFromClient, uLenData) == false)
             break;
 
         //Create file
-        FILE *fWritePtr = fopen(strMessageFromClient.c_str(),"ab"); //ghi binary vao cuoi file
-        if(fWritePtr == NULL)
+        FILE *fWritePtr = fopen(strMessageFromClient.c_str(), "wb"); //ghi binary vao cuoi file
+        if (fWritePtr == NULL) 
         {
-            std::cout << "Opening file is error"<<endl;
+            std::cout << "Opening file is error" << endl;
             break;
         }
         cout << "Created file" << endl;
 
         // Recv Data
-        int32_t uBytes = 0;
+        int32_t uMaxRecBytes = 0;
+        int32_t uRecBytes = 0;
         int8_t uRecvMessage[6] = {0};
-        while (uLenData > 0)
+        while (uLenData > 0) 
         {
-            uBytes = sizeof(uRecvMessage) - 1;
-            if(uLenData < uBytes)
-                uBytes = uLenData;
+            uMaxRecBytes = sizeof (uRecvMessage) - 1;
+            if (uLenData < uMaxRecBytes)
+                uMaxRecBytes = uLenData;
 
-            memset(uRecvMessage, 0, sizeof(uRecvMessage));
-            if(recv(nSocketClient , (char*)uRecvMessage , uBytes, 0) != uBytes)
+            memset(uRecvMessage, 0, sizeof (uRecvMessage));
+            
+            uRecBytes = recv(nSocketClient, (char*) uRecvMessage, uMaxRecBytes, 0);
+            if(uRecBytes < 1)
             {
                 cout << "Receive data failed" << endl;
                 break;
             }
-            fwrite((char*)uRecvMessage, 1, uBytes, fWritePtr);
-            uLenData = uLenData - uBytes;
+            
+            if(fwrite((char*) uRecvMessage, 1, uRecBytes, fWritePtr) != uRecBytes)
+            {
+                cout << "Write data failed" << endl;
+                break;
+            }
+            uLenData = uLenData - uRecBytes;
         }
-
         fclose(fWritePtr);
-        strMessageToClient = "Written";
-        if(sendMessage(strMessageToClient) == false)
+
+        string strMessageToClient = "Write successfully!";
+        if (sendMessage(strMessageToClient) == false)
             break;
+        
         strMessageToClient.clear();
     }
+    
     close(nSocketClient);
-    return 0;
+    return NULL;
 }
 
-int32_t createSocket()
+int32_t ConnectSocket()
 {
-    int skListen = socket(AF_INET , SOCK_STREAM , 0); //create server socket if error is returned -1
-    if (skListen == -1)
+    // create socket
+    int32_t skListen = socket(AF_INET, SOCK_STREAM, 0); //create server socket if error is returned -1
+    if (skListen == -1) 
     {
         cout << "Could not create socket" << endl;
         return -1;
     }
     cout << "Socket created" << endl;
+    
+    struct sockaddr_in saServer, saClient;
+    saServer.sin_family = AF_INET;
+    saServer.sin_addr.s_addr = INADDR_ANY;
+    saServer.sin_port = htons(8880);
+
+    //Bind: server require port for socket if < 0 return error
+    if (bind(skListen, (struct sockaddr *) &saServer, sizeof (saServer)) < 0) //
+    {
+        close(skListen);
+        perror("bind failed. Error");
+        return -1;
+    }
+    
+    //Socket listen
+    if (listen(skListen, 3) < 0) 
+    {
+        close(skListen);
+        return -1;
+    }
+    cout << "Waiting for incoming connections..." << endl; 
     return skListen;
 }
 
-bool bindSocket(int32_t skListen)
-{
-    struct sockaddr_in saServer , saClient;
-    saServer.sin_family = AF_INET;
-    saServer.sin_addr.s_addr = INADDR_ANY;
-    saServer.sin_port = htons( 8880 );
-     
-    //Bind: server require port for socket if < 0 return error
-    if( bind(skListen,(struct sockaddr *)&saServer , sizeof(saServer)) < 0) //
-    {
-        //print the error message
-        perror("bind failed. Error");
-        return false;
-    }
-    return true;
-}
-
-bool listenSocket(int32_t skListen)
-{
-    if(listen(skListen , 3) < 0)
-    {
-        close(skListen);
-        return false;
-    }
-    cout << "Waiting for incoming connections..." << endl;
-    return true;
-}
-
-bool acceptSocket(int32_t skListen)
+bool AcceptSocket(int32_t skListen) 
 {
     struct sockaddr_in saClient;
     int32_t skClient = 0;
-    int32_t uSize = sizeof(struct sockaddr_in);
-    
-    while( (skClient = accept(skListen, (struct sockaddr *)&saClient, (socklen_t*)&uSize)) >= 0)
+    int32_t uSize = sizeof (struct sockaddr_in);
+
+    while ((skClient = accept(skListen, (struct sockaddr *) &saClient, (socklen_t*) & uSize)) >= 0) 
     {
         cout << "New connection accepted" << endl;
         pthread_t sniffer_thread;
-        if( pthread_create( &sniffer_thread, NULL,  ConnectionHandler, (void*) skClient) < 0)
+        if (pthread_create(&sniffer_thread, NULL, ConnectionHandler, (void*) skClient) < 0) 
         {
             perror("could not create thread");
-            break ;
+            break;
         }
     }
-    if(skClient < 0)
+    if (skClient < 0) 
     {
         perror("No connection accept");
         return false;
@@ -226,16 +230,16 @@ bool acceptSocket(int32_t skListen)
 
 int main(int argc, char** argv) 
 {
-    int skListen;
-    skListen = createSocket();
-    if(skListen == -1)
+    uint32_t skListen = ConnectSocket();
+    if(skListen < 0)
         return 0;
-    if(bindSocket(skListen) == false)
+    
+    if (AcceptSocket(skListen) == false)
+    {
+        close(skListen);
         return 0;
-    if(listenSocket(skListen) == false)
-        return 0;
-    if(acceptSocket(skListen) == false)
-        return 0;
-    close(skListen); 
+    }
+    close(skListen);
     return 0;
 }
+

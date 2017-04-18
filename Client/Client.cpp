@@ -8,7 +8,7 @@
  * File:   main.cpp
  * Author: root
  *
- * Created on February 22, 2017, 4:16 PM
+ * Created on February 2, 2017, 4:16 PM
  */
 
 #include <cstdlib>
@@ -21,91 +21,109 @@
 #include <typeinfo>
 
 using namespace std;
-#define uSizeHeader  sizeof(uint32_t)
+#define SIZE_HEADER_FILE_NAME  sizeof(uint32_t)
+#define SIZE_HEADER_FILE_SIZE  sizeof(uint32_t)
 
-int32_t CreateSocket()
+int32_t ConnectSocket()
 {
     int32_t skClient = socket(AF_INET, SOCK_STREAM, 0);
-    if (skClient == -1) 
+    if (skClient < 0) 
     {
         std::cout << "Could not create socket" << endl;
         return -1;
     }
-    std::cout << "Socket created" << endl;
-    return skClient;
-}
-
-bool SetTimeout(int32_t skClient)
-{
-    struct timeval tvTimeout;
-    tvTimeout.tv_sec = 60;
-    tvTimeout.tv_usec = 0;
-    // set timeout
-    if(setsockopt(skClient, SOL_SOCKET, SO_RCVTIMEO, (char *)&tvTimeout,sizeof(struct timeval)) < 0)
-    {
-        perror("set socket option failed!");
-        close(skClient);
-        return false;
-    }
-    return true;
-}
-
-bool ConnectSocket(int32_t skClient)
-{
+    
     struct sockaddr_in saServer;
     saServer.sin_addr.s_addr = inet_addr("127.0.0.1");
     saServer.sin_family = AF_INET;
     saServer.sin_port = htons(8880);
-    
     if (connect(skClient, (struct sockaddr *) &saServer, sizeof (saServer)) < 0)  // correct is returned 0 else return -1
     {
-        perror("connect failed. Error");
         close(skClient);
-        return false;
+        perror("connect failed. Error");
+        return -1;
     }
     std::cout << "Connected" << endl;
+    
     //set timeout
-    if(!SetTimeout(skClient))
-        return false;
-    return true;
+    struct timeval tvTimeout;
+    tvTimeout.tv_sec = 60;
+    tvTimeout.tv_usec = 0;
+    
+    if(setsockopt(skClient, SOL_SOCKET, SO_RCVTIMEO, (char *)&tvTimeout,sizeof(struct timeval)) < 0)
+    {
+        close(skClient);
+        perror("set socket option failed!");
+        return -1;
+    }
+    
+    return skClient;
 }
 
-// Get file size
+string GetFileName()
+{
+    string strFileName = "";
+    std::cout << "Enter File Name: ";
+    std::getline(std::cin, strFileName);
+    if (!strFileName.compare("stop"))
+        return "stop";
+    return strFileName;
+}
+    
 int32_t GetFileSize(const string& strNameFile)
 {
     FILE * file = fopen(strNameFile.c_str(),"rb");
-    if(file == NULL) 
+    if(!file) 
     {
         cout<<"File Empty";
         return -1;
     }
-    else 
-    {
-        fseek(file,0,SEEK_END);
-        int32_t uSize = ftell(file);
-        fseek(file,SEEK_CUR,SEEK_SET);
-        fclose(file);
-        return uSize;
-    }
+    
+    fseek(file,0,SEEK_END);
+    int32_t uSize = ftell(file);
+    fseek(file,SEEK_CUR,SEEK_SET);
+    fclose(file);
+    return uSize;
 }
 
-bool SendFileInfor(int32_t skClient, const string& strFileName)
+//send message Download file to server 
+bool SendMessege(int32_t skClient)
 {
-    uint32_t szBuffer[2048] = {0};
-    uint32_t uLenSend = 0, uLenFileName = 0; // sum of uSizeHeader and uLenData
-    uint32_t uSizeFile = GetFileSize(strFileName);
-    
-    if(uSizeFile == -1)
+    uint8_t uBuffer[100] = {0};
+    uint32_t uLenFileName = 0;
+    uint32_t uLenSend = 0;
+    string strFileName = GetFileName();
+    if(!strFileName.compare("stop"))
         return false;
+    uLenFileName = strFileName.length();
+    uLenFileName = htonl(uLenFileName);
+    memcpy(uBuffer, &uLenFileName, SIZE_HEADER_FILE_NAME);
+    memcpy(uBuffer + SIZE_HEADER_FILE_NAME, strFileName.c_str(), strFileName.length());
+    uLenSend = SIZE_HEADER_FILE_NAME + strFileName.length();
+    
+    if(send(skClient, (char*)uBuffer, uLenSend, 0) != uLenSend)
+        return false;
+}
+
+
+
+bool SendFileInfor(int32_t skClient, const string& strFileName, uint32_t uFileSize)
+{
+    uint8_t szBuffer[2048] = {0};
+    uint32_t uLenSend = 0; // sum of uSizeHeader and uLenData
+    uint32_t uLenFileName = 0; 
     
     uLenFileName = strFileName.length();
     uLenFileName = htonl(uLenFileName);
-    memcpy(szBuffer, &uLenFileName, uSizeHeader); //length file name
-    memcpy(szBuffer + uSizeHeader, strFileName.c_str(), strFileName.length()); // File name
-    memcpy(szBuffer + uSizeHeader + strFileName.length(), &uSizeFile, sizeof(int32_t)); // length data
-    uLenSend = uSizeHeader + strFileName.length() + sizeof(uSizeFile); 
-    //Send some data
-    if (send(skClient, szBuffer, uLenSend, 0) !=  uLenSend) 
+    uFileSize = htonl(uFileSize);
+    
+    memcpy(szBuffer, &uLenFileName, SIZE_HEADER_FILE_NAME); //length file name
+    memcpy(szBuffer + SIZE_HEADER_FILE_NAME, &uFileSize, SIZE_HEADER_FILE_SIZE); // length data
+    memcpy(szBuffer + SIZE_HEADER_FILE_NAME + SIZE_HEADER_FILE_SIZE, strFileName.c_str(), strFileName.length()); // File name
+    uLenSend = SIZE_HEADER_FILE_NAME + SIZE_HEADER_FILE_SIZE + strFileName.length(); 
+    
+    //Send Header
+    if (send(skClient, (char*)szBuffer, uLenSend, 0) !=  uLenSend) 
     {
         std::cout << "Send failed" << endl;
         return false;
@@ -113,53 +131,68 @@ bool SendFileInfor(int32_t skClient, const string& strFileName)
     return true;
 }
 
-bool SendFileName(int32_t skClient, string& strFileName)
-{
-    strFileName.clear();
-    std::cout << "Enter File Name: ";
-    std::getline(std::cin, strFileName);
-    if(!strFileName.compare("stop"))
-        return false;
-    
-    if(SendFileInfor(skClient, strFileName) == false)
-        return false;
-    
-    return true;
-}
-
 bool SendFileData(int32_t skClient)
 {
-    string strFileName = "";
-    if(SendFileName(skClient, strFileName) == false)
+    //get file name
+    string strFileName = GetFileName();
+    if (!strFileName.compare("stop"))
         return false;
+    
+    //get file size
+    uint32_t uFileSize = GetFileSize(strFileName);
+    if(uFileSize == -1)
+        return false;
+    
+    //send file info include: file name, size of file
+    if(SendFileInfor(skClient, strFileName, uFileSize) == false)
+        return false;
+            
     FILE * file = fopen(strFileName.c_str(),"rb");
     if(!file)
         return false;
     
     char buf[5] = {0};
     int bufSize = sizeof(buf);
-    while(!feof(file))
+    
+    int nSizeSendBytes = 0;
+
+    while(uFileSize > 0)
     {
-        int res = fread(buf,1,bufSize,file);
-        //fileConTent(skClient, buf);
-        if (send(skClient, buf, res, 0) !=  res) 
+        if(bufSize < uFileSize)
+            nSizeSendBytes = bufSize;
+        else
+            nSizeSendBytes = uFileSize;
+        
+        uint32_t uByteRead = fread(buf, 1, nSizeSendBytes,file);
+        if(uByteRead != nSizeSendBytes)
         {
+            fclose(file);
+            std::cout << "Read file failed" << endl;
+            return false;
+        }
+        
+        if (send(skClient, buf, uByteRead, 0) !=  uByteRead) 
+        {
+            fclose(file);
             std::cout << "Send failed" << endl;
             return false;
         }
+        
         memset(buf, 0, sizeof(buf));
+        uFileSize = uFileSize - uByteRead;
     }
+    
     fclose(file);
     return true;
 }
 
 bool CheckRecv(int32_t skClient)
 {
-    uint32_t uLenSend = 0, uLenData = 0; // sum of uSizeHeader and uLenData
-    string strRecvFromServer = "\0";
+    uint32_t uLenData = 0; // sum of uSizeHeader and uLenData
+    string strRecvFromServer = "";
     char uServerReply[50] = {0}; //server replay ok?
     //Recv header
-    if(recv(skClient, &uLenData, uSizeHeader, 0) != uSizeHeader)
+    if(recv(skClient, &uLenData, SIZE_HEADER_FILE_NAME, 0) != SIZE_HEADER_FILE_NAME)
     {
         std::cout << "Receive header failed" << endl;
         return false;
@@ -170,8 +203,8 @@ bool CheckRecv(int32_t skClient)
         std::cout << "Header failed" << endl;
         return false;
     }
+    
     // data Recv from the server
-
     memset(uServerReply, 0, strlen(uServerReply));
     if(recv(skClient, uServerReply, uLenData, 0) != uLenData)
     {
@@ -186,12 +219,10 @@ bool CheckRecv(int32_t skClient)
 int main(int argc, char** argv) 
 {
     //Create socket
-    int32_t skClient = CreateSocket();
-    if(skClient == -1)
+    int32_t skClient = ConnectSocket();
+    if(skClient < 0)
         return 0;
-    //Connect to remote server
-    if(!ConnectSocket(skClient))
-        return 0;
+    
     //keep communicating with server
     while (true) 
     {
@@ -200,6 +231,7 @@ int main(int argc, char** argv)
         if(CheckRecv(skClient) == false)  // check Recv from server
             break;
     }
+    
     close(skClient); 
     return 0;
 }
